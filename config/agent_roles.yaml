@@ -1,0 +1,190 @@
+agents:
+  coordinator:
+    capabilities:
+      - task_routing
+      - conflict_resolution
+      - monitoring
+      - system_health_check
+    workflows:
+      - core/coordinate_agents
+      - core/discover_workflows
+      - core/handle_failure
+    max_concurrent_tasks: 10
+    priority: highest
+    description: "Central orchestration agent that routes tasks to specialized agents and resolves conflicts"
+
+  developer_agent:
+    capabilities:
+      - code_writing
+      - refactoring
+      - bug_fixing
+      - git_operations
+      - code_review
+    workflows:
+      - development/add_feature
+      - development/fix_bug
+      - development/refactor_code
+      - development/android_development
+      - development/code_review
+    max_concurrent_tasks: 3
+    languages:
+      - python
+      - kotlin
+    priority: high
+    description: "Autonomous code development agent for watch app (Kotlin) and dashboard (Python)"
+
+  tester_agent:
+    capabilities:
+      - test_execution
+      - test_generation
+      - coverage_analysis
+      - integration_testing
+      - performance_testing
+    workflows:
+      - testing/run_tests
+      - testing/create_tests
+      - testing/integration_testing
+    max_concurrent_tasks: 5
+    priority: high
+    description: "Continuous testing and quality assurance agent"
+
+  deployer_agent:
+    capabilities:
+      - deployment
+      - rollback
+      - health_checks
+      - build_management
+      - version_control
+    workflows:
+      - deployment/deploy_dashboard
+      - deployment/build_watch_app
+      - deployment/rollback
+    max_concurrent_tasks: 2
+    priority: high
+    description: "Safe deployment and rollback agent for both watch app and dashboard"
+
+  data_processor:
+    capabilities:
+      - web_scraping
+      - api_calls
+      - data_transformation
+      - rss_processing
+      - connector_management
+    workflows:
+      - data/scrape_website
+      - data/process_rss
+      - data/sync_google_sheets
+      - connectors/test_connector
+      - connectors/add_connector
+    max_concurrent_tasks: 10
+    priority: normal
+    description: "Handles data workflows, scraping, and connector operations"
+
+# Workflow registry - maps task types to workflows and agents
+workflow_registry:
+  add_watch_feature:
+    workflow: workflows/development/android_development.md
+    required_tools:
+      - tools/development/android_build.py
+      - tools/development/git_operations.py
+    assigned_agent: developer_agent
+    requires_approval: false
+
+  add_dashboard_feature:
+    workflow: workflows/development/add_feature.md
+    required_tools:
+      - tools/development/git_operations.py
+      - tools/testing/run_pytest.py
+    assigned_agent: developer_agent
+    requires_approval: false
+
+  fix_bug:
+    workflow: workflows/development/fix_bug.md
+    required_tools:
+      - tools/development/git_operations.py
+      - tools/testing/run_pytest.py
+    assigned_agent: developer_agent
+    requires_approval: false
+
+  deploy_dashboard:
+    workflow: workflows/deployment/deploy_dashboard.md
+    required_tools:
+      - tools/deployment/deploy_to_cloud.py
+      - tools/deployment/health_check.py
+    assigned_agent: deployer_agent
+    requires_approval: true  # Production deployments need human approval
+
+  build_watch_app:
+    workflow: workflows/deployment/build_watch_app.md
+    required_tools:
+      - tools/development/android_build.py
+    assigned_agent: deployer_agent
+    requires_approval: false
+
+  run_tests:
+    workflow: workflows/testing/run_tests.md
+    required_tools:
+      - tools/testing/run_pytest.py
+      - tools/testing/run_android_tests.py
+    assigned_agent: tester_agent
+    requires_approval: false
+
+  integration_test:
+    workflow: workflows/testing/integration_testing.md
+    required_tools:
+      - tools/testing/run_pytest.py
+      - tools/deployment/health_check.py
+    assigned_agent: tester_agent
+    requires_approval: false
+
+  scrape_website:
+    workflow: workflows/data/scrape_website.md
+    required_tools:
+      - tools/connectors/web_scraper.py
+    assigned_agent: data_processor
+    requires_approval: false
+
+  process_rss:
+    workflow: workflows/data/process_rss.md
+    required_tools:
+      - tools/data/rss_parser.py
+    assigned_agent: data_processor
+    requires_approval: false
+
+  send_slack_message:
+    workflow: workflows/connectors/test_connector.md
+    required_tools:
+      - tools/connectors/slack_client.py
+    assigned_agent: data_processor
+    requires_approval: false
+
+# System settings
+system:
+  message_bus:
+    type: redis  # or "in_memory" for testing
+    timeout_seconds: 300
+    retry_attempts: 3
+
+  context_store:
+    type: redis  # or "json_file" for testing
+    backup_interval_minutes: 30
+
+  failure_handling:
+    max_retry_attempts: 3
+    escalate_after_failures: 3
+    human_escalation_channels:
+      - slack
+      - email
+
+  security:
+    require_approval_for:
+      - production_deployment
+      - credential_changes
+      - data_deletion
+      - breaking_api_changes
+    audit_log_enabled: true
+
+  performance:
+    max_parallel_agents: 10
+    task_timeout_minutes: 60
+    health_check_interval_minutes: 15

@@ -1,0 +1,69 @@
+# Environment variables and credentials
+.env
+.env.local
+.env.*.local
+credentials.json
+token.json
+
+# Temporary files
+.tmp/
+*.tmp
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Watch app (Android Studio)
+watch-app/.gradle/
+watch-app/.idea/
+watch-app/.kotlin/
+watch-app/build/
+watch-app/app/build/
+watch-app/local.properties
+watch-app/captures/
+watch-app/*.iml
+watch-app/*.apk
+watch-app/*.aab
+watch-app/*.ap_
+watch-app/*.dex
+
+# Dashboard
+dashboard/__pycache__/
+dashboard/*.pyc
+dashboard/venv/
+dashboard/.pytest_cache/
+
+# Redis
+dump.rdb
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

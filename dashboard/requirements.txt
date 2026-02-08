@@ -1,0 +1,68 @@
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+
+# AI & Anthropic
+anthropic==0.18.1
+
+# Database & Storage
+supabase==2.3.0
+redis==5.0.1
+
+# HTTP & API Clients
+httpx==0.24.1
+requests==2.31.0
+
+# Social Media Connectors
+tweepy==4.14.0  # Twitter/X
+# LinkedIn - using direct HTTP requests via httpx/requests
+facebook-sdk==3.1.0  # Facebook
+# Instagram - using Instagram Graph API via HTTP requests
+
+# Productivity Connectors
+slack-sdk==3.26.2  # Slack
+google-api-python-client==2.116.0  # Google Calendar, Sheets
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.0
+
+# Email
+aiosmtplib==3.0.1
+email-validator==2.1.0
+
+# Data Processing
+beautifulsoup4==4.12.3  # Web scraping
+lxml==5.1.0
+feedparser==6.0.11  # RSS feeds
+pandas==2.2.0  # Data manipulation
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.4
+pytest-cov==4.1.0
+
+# Code Analysis & Quality
+pylint==3.0.3
+black==24.1.1
+mypy==1.8.0
+
+# Configuration & Environment
+python-dotenv==1.0.1
+pyyaml==6.0.1
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2024.1
+
+# Git Operations
+GitPython==3.1.41
+
+# File Operations
+watchdog==4.0.0  # File system monitoring
+
+# Async & Threading
+asyncio==3.4.3
+aiofiles==23.2.1
+
+# Logging & Monitoring
+structlog==24.1.0
