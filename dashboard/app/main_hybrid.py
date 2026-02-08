@@ -30,6 +30,7 @@ app.add_middleware(
 # In-memory storage (replaces complex ContextStore)
 saved_contexts: Dict[str, Dict] = {}
 deployments: List[Dict] = []
+tasks: List[Dict] = []  # Task storage
 watch_config = {
     "status": "Agent Swarm Online (Hybrid Mode)",
     "animation_url": "https://lottie.host/4e6fbdae-9e0c-4b6f-915d-d3e9b8b8c8a8/TbWqGjFQCE.json",
@@ -208,6 +209,62 @@ async def send_watch_message(request: WatchMessageRequest):
         "message": "Response sent to watch via config update"
     }
 
+class TaskRequest(BaseModel):
+    description: str
+    priority: Optional[str] = "normal"
+
+@app.post("/api/tasks")
+async def create_task(request: TaskRequest):
+    """Task submission endpoint for Lovable dashboard"""
+    global tasks
+
+    task_id = f"task_{datetime.now().timestamp()}"
+    task = {
+        "task_id": task_id,
+        "description": request.description,
+        "priority": request.priority,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+        "source": "lovable_dashboard"
+    }
+
+    tasks.append(task)
+    print(f"📋 New task: {request.description} (priority: {request.priority})")
+
+    return {
+        "status": "success",
+        "task_id": task_id,
+        "task": task,
+        "message": f"Task created successfully"
+    }
+
+@app.get("/api/tasks")
+async def get_tasks():
+    """Get all tasks"""
+    return {
+        "tasks": tasks,
+        "total": len(tasks),
+        "pending": len([t for t in tasks if t["status"] == "pending"]),
+        "completed": len([t for t in tasks if t["status"] == "completed"])
+    }
+
+class TestMessageRequest(BaseModel):
+    message: str
+
+@app.post("/api/watch/test-message")
+async def send_test_message(request: TestMessageRequest):
+    """Send test message to watch"""
+    global watch_config
+
+    watch_config["status"] = request.message
+    watch_config["primary_color"] = "#00BFFF"  # Blue for test messages
+
+    return {
+        "status": "success",
+        "message": "Test message sent to watch",
+        "timestamp": datetime.now().isoformat()
+    }
+
 def parse_intent(message: str) -> dict:
     """Simple keyword-based intent parser"""
     message_lower = message.lower()
@@ -261,7 +318,7 @@ async def process_with_claude(message: str) -> dict:
 async def chat(request: ChatRequest):
     """
     REAL MESSAGE PROCESSING
-    - Stores messages in memory
+    - Stores ALL messages in memory
     - Parses intent
     - Returns appropriate response
     """
@@ -276,24 +333,23 @@ async def chat(request: ChatRequest):
     intent = intent_data["intent"]
     print(f"🎯 Intent: {intent}")
 
+    # ALWAYS save the message to saved_contexts (not just for certain intents)
+    context_text = request.message.replace("save context:", "").replace("Save context:", "").strip()
+    context_id = f"context_{datetime.now().timestamp()}"
+
+    saved_contexts[context_id] = {
+        "text": context_text,
+        "timestamp": datetime.now().isoformat(),
+        "source": "watch_voice_command",
+        "intent": intent,
+        "device_id": "galaxy_watch_4"
+    }
+
+    print(f"💾 Saved: {context_text[:50]}... (Total: {len(saved_contexts)})")
+
     # Handle based on intent
     if intent == "save_context" or intent == "unknown":
-        # Save message to storage
-        context_text = request.message.replace("save context:", "").replace("Save context:", "").strip()
-        context_id = f"context_{datetime.now().timestamp()}"
-
-        saved_contexts[context_id] = {
-            "text": context_text,
-            "timestamp": datetime.now().isoformat(),
-            "source": "watch_voice_command",
-            "intent": intent
-        }
-
-        # Update watch status
         watch_config["status"] = "✓ Message saved"
-
-        print(f"💾 Saved: {context_text[:50]}...")
-
         return ChatResponse(
             reply_text=f"Message saved! ({len(saved_contexts)} total)",
             action="context_saved"
