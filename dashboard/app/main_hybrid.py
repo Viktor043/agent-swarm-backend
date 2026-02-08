@@ -160,6 +160,53 @@ def update_watch_config(config: WatchConfig):
         "timestamp": datetime.now().isoformat()
     }
 
+class WatchMessageRequest(BaseModel):
+    message: str
+    device_id: Optional[str] = "lovable_dashboard"
+
+@app.post("/api/watch-message")
+async def send_watch_message(request: WatchMessageRequest):
+    """
+    Endpoint for Lovable dashboard to send messages to the watch
+    The message gets processed by Claude API and response is sent to watch
+    """
+    global watch_config
+
+    print(f"📱 Lovable message: {request.message}")
+
+    try:
+        # Process message with Claude API if available
+        if claude_client:
+            response = claude_client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=256,
+                messages=[{
+                    "role": "user",
+                    "content": f"You are a helpful AI assistant on a Galaxy Watch. Respond concisely (max 50 words) to: {request.message}"
+                }]
+            )
+            reply_text = response.content[0].text
+        else:
+            # Fallback response without Claude
+            reply_text = f"Received: {request.message}"
+
+        # Update watch config with the response
+        watch_config["status"] = reply_text[:100]  # Limit to 100 chars for watch display
+        watch_config["primary_color"] = "#00FF00"  # Green to indicate new message
+
+        print(f"🤖 Claude reply: {reply_text}")
+
+        return {
+            "status": "success",
+            "reply": reply_text,
+            "timestamp": datetime.now().isoformat(),
+            "message": "Response sent to watch via config update"
+        }
+
+    except Exception as e:
+        print(f"❌ Error processing message: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 def parse_intent(message: str) -> dict:
     """Simple keyword-based intent parser"""
     message_lower = message.lower()
