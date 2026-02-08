@@ -102,6 +102,22 @@ class ChatResponse(BaseModel):
     action: Optional[str] = None
 
 
+def get_or_create_gemini_agent():
+    """Lazy initialization of Gemini agent to avoid startup hang"""
+    global gemini_agent
+    if gemini_agent is None and os.getenv("GOOGLE_API_KEY"):
+        try:
+            print("⚙️  Initializing Gemini agent on first use...")
+            gemini_agent = GeminiAgent()
+            gemini_agent.startup()
+            agents["gemini_deployer"] = gemini_agent
+            print("✓ Gemini deployment agent ready")
+        except Exception as e:
+            print(f"⚠️  Gemini agent initialization failed: {e}")
+            return None
+    return gemini_agent
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize all agents on startup"""
@@ -125,17 +141,18 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️  Claude API initialization failed: {e}")
 
-    # Initialize Gemini deployment agent
+    # Initialize Gemini deployment agent (lazy initialization to avoid blocking)
     try:
         if os.getenv("GOOGLE_API_KEY"):
-            gemini_agent = GeminiAgent()
-            gemini_agent.startup()
-            agents["gemini_deployer"] = gemini_agent
-            print("✓ Gemini deployment agent ready")
+            print("⚙️  Gemini agent will initialize on first use...")
+            # Don't initialize now - will be created on-demand to avoid startup hang
+            gemini_agent = None  # Lazy initialization
         else:
             print("⚠️  GOOGLE_API_KEY not set - deployment agent disabled")
+            gemini_agent = None
     except Exception as e:
         print(f"⚠️  Gemini agent initialization failed: {e}")
+        gemini_agent = None
 
     # Initialize default watch config
     coordinator.context_store.set_context("watch.config", {
@@ -547,7 +564,9 @@ async def handle_deployment_intent(message: str, action_plan: dict = None):
     This enables autonomous deployment from voice commands!
     """
     try:
-        if not gemini_agent:
+        # Lazy initialize Gemini agent
+        agent = get_or_create_gemini_agent()
+        if not agent:
             return {
                 "reply_text": "Deployment agent not available. Check GOOGLE_API_KEY.",
                 "action": "deployment_unavailable"
@@ -568,7 +587,7 @@ async def handle_deployment_intent(message: str, action_plan: dict = None):
         )
 
         # Execute via Gemini agent (async)
-        gemini_agent.execute_task(task)
+        agent.execute_task(task)
 
         # Update watch status
         coordinator.context_store.set_context("watch.config.status", "⚙️ Deploying...")
@@ -711,10 +730,13 @@ async def get_deployments():
     # Sort by timestamp (newest first)
     deployments.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
 
+    # Check if Gemini agent is available (don't initialize just to check status)
+    agent_status = "online" if (gemini_agent or os.getenv("GOOGLE_API_KEY")) else "offline"
+
     return {
         "deployments": deployments,
         "total": len(deployments),
-        "agent_status": "online" if gemini_agent else "offline"
+        "agent_status": agent_status
     }
 
 
@@ -749,33 +771,37 @@ async def get_codebase_context():
 
     Shows project structure, recent changes, deployment targets
     """
-    if not gemini_agent:
+    # Lazy initialize Gemini agent
+    agent = get_or_create_gemini_agent()
+    if not agent:
         return {
             "error": "Gemini agent not initialized",
             "message": "Set GOOGLE_API_KEY to enable codebase analysis"
         }
 
-    context = gemini_agent._get_codebase_context()
+    context = agent._get_codebase_context()
 
     return {
         "codebase": context,
-        "cache_age_seconds": (datetime.now() - gemini_agent.codebase_cache_time).total_seconds() if gemini_agent.codebase_cache_time else 0,
-        "last_updated": gemini_agent.codebase_cache_time.isoformat() if gemini_agent.codebase_cache_time else None
+        "cache_age_seconds": (datetime.now() - agent.codebase_cache_time).total_seconds() if agent.codebase_cache_time else 0,
+        "last_updated": agent.codebase_cache_time.isoformat() if agent.codebase_cache_time else None
     }
 
 
 @app.post("/api/codebase/refresh")
 async def refresh_codebase_context():
     """Force refresh of codebase context cache"""
-    if not gemini_agent:
+    # Lazy initialize Gemini agent
+    agent = get_or_create_gemini_agent()
+    if not agent:
         raise HTTPException(status_code=503, detail="Gemini agent not initialized")
 
     # Clear cache to force rebuild
-    gemini_agent.codebase_context = None
-    gemini_agent.codebase_cache_time = None
+    agent.codebase_context = None
+    agent.codebase_cache_time = None
 
     # Get fresh context
-    context = gemini_agent._get_codebase_context()
+    context = agent._get_codebase_context()
 
     return {
         "status": "refreshed",
