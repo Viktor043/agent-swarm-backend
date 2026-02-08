@@ -27,6 +27,15 @@ except ImportError:
     # from app.agents.deployer_agent import DeployerAgent
     # from app.agents.data_processor import DataProcessorAgent
 
+# Import connectors
+import sys
+import os
+# Add tools directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
+
+from connectors.google_calendar import get_calendar_client, parse_calendar_command
+from connectors.slack_client import get_slack_client
+
 app = FastAPI(title="Agent Swarm Dashboard API")
 
 # CORS for Lovable dashboard
@@ -303,37 +312,197 @@ async def get_watch_config():
     return WatchConfig(**config)
 
 
+# ============================================================================
+# INTENT PARSING & DEMO HANDLERS
+# ============================================================================
+
+def parse_intent(message: str) -> dict:
+    """Simple keyword-based intent parser for demo features"""
+    message_lower = message.lower()
+
+    # Calendar intent
+    if any(word in message_lower for word in ["schedule", "meeting", "calendar", "book", "appointment"]):
+        return {
+            "intent": "calendar",
+            "original_message": message
+        }
+
+    # Slack intent
+    if any(word in message_lower for word in ["slack", "brief", "summary", "report"]):
+        return {
+            "intent": "slack",
+            "original_message": message
+        }
+
+    # Context saving intent
+    if any(word in message_lower for word in ["save context", "remember", "note", "record"]):
+        return {
+            "intent": "save_context",
+            "original_message": message
+        }
+
+    return {"intent": "unknown", "original_message": message}
+
+
+async def handle_calendar_intent(message: str):
+    """Handle calendar booking from voice command"""
+    try:
+        print(f"📅 Calendar intent: {message}")
+
+        # Parse the command
+        event_details = parse_calendar_command(message)
+
+        # Create the event
+        calendar_client = get_calendar_client()
+        event_link = calendar_client.create_event(
+            summary=event_details["title"],
+            start_time=event_details["start_time"],
+            duration_minutes=event_details["duration"]
+        )
+
+        # Update watch status
+        coordinator.context_store.set("watch.config.status", f"✓ Event created: {event_details['title']}")
+
+        print(f"✅ Calendar event created: {event_details['title']} at {event_details['start_time']}")
+
+        return {
+            "reply_text": f"Calendar event created: {event_details['title']}",
+            "action": "calendar_created"
+        }
+    except Exception as e:
+        print(f"❌ Calendar error: {e}")
+        coordinator.context_store.set("watch.config.status", "✗ Calendar error")
+        return {
+            "reply_text": "Failed to create calendar event. Check Google Calendar setup.",
+            "action": "calendar_error"
+        }
+
+
+async def handle_slack_intent(message: str):
+    """Handle Slack posting from voice command"""
+    try:
+        print(f"💬 Slack intent: {message}")
+
+        # Send daily brief
+        slack_client = get_slack_client()
+        slack_client.send_daily_brief()
+
+        # Update watch status
+        coordinator.context_store.set("watch.config.status", "✓ Slack brief sent")
+
+        print(f"✅ Slack brief sent successfully")
+
+        return {
+            "reply_text": "Daily brief sent to Slack!",
+            "action": "slack_posted"
+        }
+    except Exception as e:
+        print(f"❌ Slack error: {e}")
+        coordinator.context_store.set("watch.config.status", "✗ Slack error")
+        return {
+            "reply_text": "Failed to send Slack message. Check SLACK_BOT_TOKEN.",
+            "action": "slack_error"
+        }
+
+
+async def handle_context_intent(message: str):
+    """Save conversation context"""
+    try:
+        # Remove the "save context:" prefix if present
+        context_text = message.replace("save context:", "").replace("Save context:", "").strip()
+
+        # Store in context store with timestamp
+        context_id = f"context_{datetime.now().timestamp()}"
+        coordinator.context_store.set(f"saved_contexts.{context_id}", {
+            "text": context_text,
+            "timestamp": datetime.now().isoformat(),
+            "source": "watch_voice_command"
+        })
+
+        # Update watch status
+        coordinator.context_store.set("watch.config.status", "✓ Context saved")
+
+        print(f"💾 Context saved: {context_text[:50]}...")
+
+        return {
+            "reply_text": "Context saved successfully!",
+            "action": "context_saved"
+        }
+    except Exception as e:
+        print(f"Context save error: {e}")
+        return {
+            "reply_text": "Failed to save context",
+            "action": "context_error"
+        }
+
+
 @app.post("/functions/v1/chat", response_model=ChatResponse)
 async def receive_chat(request: ChatRequest):
     """
     Receives voice messages from watch app
-    Routes to agent swarm for processing
+    Routes to demo feature handlers based on intent
     """
     if not coordinator:
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
     print(f"⌚ Watch message: {request.message}")
 
-    # Update watch config to show processing status
-    coordinator.context_store.update("watch.config.status", "Processing message...")
+    # Parse intent
+    intent_data = parse_intent(request.message)
+    intent = intent_data["intent"]
 
-    # Route task through coordinator
-    success = coordinator.route_incoming_task(
-        task_description=f"Process watch message: {request.message}",
-        priority="high"  # Watch messages are high priority
-    )
+    print(f"🎯 Detected intent: {intent}")
 
-    if success:
-        return ChatResponse(
-            reply_text="Message received! Processing now.",
-            action="task_queued"
-        )
+    # Route to appropriate handler
+    if intent == "calendar":
+        response = await handle_calendar_intent(request.message)
+    elif intent == "slack":
+        response = await handle_slack_intent(request.message)
+    elif intent == "save_context":
+        response = await handle_context_intent(request.message)
     else:
-        coordinator.context_store.update("watch.config.status", "Agent Swarm Idle")
-        return ChatResponse(
-            reply_text="Agents busy. Message queued.",
-            action="queued"
+        # Unknown intent - fallback to old coordinator routing
+        coordinator.context_store.update("watch.config.status", "Processing message...")
+        success = coordinator.route_incoming_task(
+            task_description=f"Process watch message: {request.message}",
+            priority="high"
         )
+        if success:
+            response = {
+                "reply_text": "Message received! Processing now.",
+                "action": "task_queued"
+            }
+        else:
+            coordinator.context_store.update("watch.config.status", "Agent Swarm Idle")
+            response = {
+                "reply_text": "I didn't understand that command.",
+                "action": "unknown"
+            }
+
+    return ChatResponse(**response)
+
+
+@app.get("/api/saved-contexts")
+async def get_saved_contexts():
+    """Get all saved contexts for display in dashboard"""
+    if not coordinator:
+        raise HTTPException(status_code=503, detail="Coordinator not initialized")
+
+    contexts_data = coordinator.context_store.get("saved_contexts", {})
+
+    # Convert to list format
+    contexts = [
+        {
+            "id": context_id,
+            **context_data
+        }
+        for context_id, context_data in contexts_data.items()
+    ]
+
+    # Sort by timestamp (newest first)
+    contexts.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+    return {"contexts": contexts, "total": len(contexts)}
 
 
 @app.post("/api/update-watch-config")
