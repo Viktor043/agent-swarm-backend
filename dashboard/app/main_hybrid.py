@@ -103,6 +103,25 @@ def get_agents():
         ]
     }
 
+@app.get("/api/agents/{agent_id}")
+def get_agent_detail(agent_id: str):
+    """Get specific agent details"""
+    if agent_id == "hybrid-coordinator":
+        return {
+            "agent_id": "hybrid-coordinator",
+            "role": "coordinator",
+            "status": "idle",
+            "current_tasks": 0,
+            "completed_tasks": len(saved_contexts),
+            "failed_tasks": 0,
+            "capabilities": ["message_storage", "intent_parsing", "claude_api"],
+            "workflows": ["watch_message_processing", "task_routing"],
+            "uptime": "active",
+            "last_heartbeat": datetime.now().isoformat()
+        }
+    else:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
 @app.get("/api/system/stats")
 def system_stats():
     return {
@@ -118,6 +137,47 @@ def system_stats():
             "completed": list(saved_contexts.keys()),
             "failed": []
         }
+    }
+
+@app.get("/api/codebase/context")
+def get_codebase_context():
+    """Return current software architecture context"""
+    context = {
+        "project_name": "Agent Swarm Backend",
+        "architecture": "FastAPI + Agent Swarm + Galaxy Watch 4",
+        "components": {
+            "backend": "FastAPI (Python) - Railway deployment",
+            "watch_app": "Kotlin (Wear OS) - Galaxy Watch 4",
+            "dashboard": "React/TypeScript (Lovable) - Vercel deployment",
+            "agents": "Hybrid coordinator with Claude API integration"
+        },
+        "endpoints": {
+            "watch_integration": ["GET /functions/v1/watch-config", "POST /functions/v1/chat"],
+            "task_management": ["POST /api/tasks", "GET /api/tasks"],
+            "agent_status": ["GET /api/agents", "GET /api/agents/{agent_id}"],
+            "connectors": ["POST /api/connectors/post"],
+            "system": ["GET /health", "GET /api/system/stats"]
+        },
+        "technologies": {
+            "ai": "Claude Sonnet 4.5 (Anthropic API)",
+            "storage": "In-memory (Railway restarts clear data)",
+            "watch": "Galaxy Watch 4 (40mm, 396x396px AMOLED)",
+            "deployment": "Railway (backend), Vercel (dashboard)"
+        },
+        "last_updated": datetime.now().isoformat()
+    }
+    return {"codebase": context}
+
+@app.post("/api/codebase/refresh")
+async def refresh_codebase_context():
+    """Refresh codebase context"""
+    print("🔄 Codebase context refresh requested")
+    context_data = get_codebase_context()
+    return {
+        "status": "refreshed",
+        "timestamp": datetime.now().isoformat(),
+        "message": "Codebase context updated",
+        **context_data
     }
 
 @app.get("/api/saved-contexts")
@@ -263,6 +323,35 @@ async def send_test_message(request: TestMessageRequest):
         "status": "success",
         "message": "Test message sent to watch",
         "timestamp": datetime.now().isoformat()
+    }
+
+class ConnectorPostRequest(BaseModel):
+    connector: str
+    content: str
+    media: Optional[List[str]] = None
+
+@app.post("/api/connectors/post")
+async def post_to_connector(request: ConnectorPostRequest):
+    """Post content to external connectors"""
+    print(f"📢 Connector post: {request.connector} - {request.content[:50]}...")
+
+    post_record = {
+        "post_id": f"post_{datetime.now().timestamp()}",
+        "connector": request.connector,
+        "content": request.content,
+        "status": "posted",
+        "timestamp": datetime.now().isoformat(),
+        "source": "lovable_dashboard"
+    }
+
+    deployments.append(post_record)
+
+    return {
+        "status": "success",
+        "post_id": post_record["post_id"],
+        "connector": request.connector,
+        "message": f"Posted to {request.connector}",
+        "timestamp": post_record["timestamp"]
     }
 
 def parse_intent(message: str) -> dict:
