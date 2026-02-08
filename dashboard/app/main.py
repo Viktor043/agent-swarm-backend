@@ -10,11 +10,14 @@ from pydantic import BaseModel
 from typing import Optional, Dict, List
 import asyncio
 from datetime import datetime
+import json
+import anthropic
 
 # Import agents
 # Using absolute imports for Railway compatibility
 try:
     from dashboard.app.agents.coordinator import CoordinatorAgent
+    from dashboard.app.agents.gemini_agent import GeminiAgent
     # from dashboard.app.agents.developer_agent import DeveloperAgent
     # from dashboard.app.agents.tester_agent import TesterAgent
     # from dashboard.app.agents.deployer_agent import DeployerAgent
@@ -22,6 +25,7 @@ try:
 except ImportError:
     # Fallback for local development
     from app.agents.coordinator import CoordinatorAgent
+    from app.agents.gemini_agent import GeminiAgent
     # from app.agents.developer_agent import DeveloperAgent
     # from app.agents.tester_agent import TesterAgent
     # from app.agents.deployer_agent import DeployerAgent
@@ -35,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../tools'))
 
 from connectors.google_calendar import get_calendar_client, parse_calendar_command
 from connectors.slack_client import get_slack_client
+from core.agent_registry import Task
 
 app = FastAPI(title="Agent Swarm Dashboard API")
 
@@ -49,6 +54,8 @@ app.add_middleware(
 
 # Global agent instances (initialized on startup)
 coordinator: Optional[CoordinatorAgent] = None
+gemini_agent: Optional[GeminiAgent] = None
+claude_client: Optional[anthropic.Anthropic] = None
 agents: Dict[str, any] = {}
 
 
@@ -98,7 +105,7 @@ class ChatResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize all agents on startup"""
-    global coordinator, agents
+    global coordinator, gemini_agent, claude_client, agents
 
     print("🚀 Starting Agent Swarm...")
 
@@ -106,6 +113,29 @@ async def startup_event():
     coordinator = CoordinatorAgent()
     coordinator.startup()
     agents["coordinator"] = coordinator
+
+    # Initialize Claude API client for enhanced reasoning
+    try:
+        claude_api_key = os.getenv("ANTHROPIC_API_KEY")
+        if claude_api_key:
+            claude_client = anthropic.Anthropic(api_key=claude_api_key)
+            print("✓ Claude API client initialized")
+        else:
+            print("⚠️  ANTHROPIC_API_KEY not set - advanced reasoning disabled")
+    except Exception as e:
+        print(f"⚠️  Claude API initialization failed: {e}")
+
+    # Initialize Gemini deployment agent
+    try:
+        if os.getenv("GOOGLE_API_KEY"):
+            gemini_agent = GeminiAgent()
+            gemini_agent.startup()
+            agents["gemini_deployer"] = gemini_agent
+            print("✓ Gemini deployment agent ready")
+        else:
+            print("⚠️  GOOGLE_API_KEY not set - deployment agent disabled")
+    except Exception as e:
+        print(f"⚠️  Gemini agent initialization failed: {e}")
 
     # Initialize default watch config
     coordinator.context_store.set("watch.config", {
@@ -320,6 +350,13 @@ def parse_intent(message: str) -> dict:
     """Simple keyword-based intent parser for demo features"""
     message_lower = message.lower()
 
+    # Deployment intent (NEW - for Gemini agent)
+    if any(word in message_lower for word in ["deploy", "build", "push", "release", "update code", "modify", "add feature", "fix bug"]):
+        return {
+            "intent": "deploy_code",
+            "original_message": message
+        }
+
     # Calendar intent
     if any(word in message_lower for word in ["schedule", "meeting", "calendar", "book", "appointment"]):
         return {
@@ -342,6 +379,73 @@ def parse_intent(message: str) -> dict:
         }
 
     return {"intent": "unknown", "original_message": message}
+
+
+async def process_with_claude_api(message: str, context: dict) -> dict:
+    """
+    Use Claude API to interpret command and plan actions
+
+    This provides enhanced reasoning for complex tasks beyond simple keyword matching
+    """
+    if not claude_client:
+        # Fallback to simple intent parsing
+        return parse_intent(message)
+
+    try:
+        # Build context-aware prompt
+        system_prompt = f"""You are an intelligent agent coordinator. You receive voice commands from a Galaxy Watch 4.
+
+Available capabilities:
+- Calendar management (Google Calendar API)
+- Slack notifications and daily briefs
+- Context saving (memory storage)
+- Code deployment (via Gemini agent with full codebase access)
+- Web scraping and data processing
+
+Current system context:
+- Recent deployments: {len(context.get('deployments', []))}
+- Saved contexts: {len(context.get('saved_contexts', {}))}
+- Active agents: {context.get('active_agents', [])}
+
+Analyze the user's command and return a JSON action plan with:
+{{
+  "intent": "calendar|slack|save_context|deploy_code|unknown",
+  "confidence": 0.0-1.0,
+  "task_description": "detailed description of what to do",
+  "parameters": {{}},
+  "reasoning": "why you chose this interpretation"
+}}"""
+
+        response = claude_client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{
+                "role": "user",
+                "content": message
+            }]
+        )
+
+        # Parse Claude's response
+        response_text = response.content[0].text
+
+        # Extract JSON (handle markdown code blocks)
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+
+        action_plan = json.loads(response_text)
+        action_plan["original_message"] = message
+
+        print(f"🤖 Claude API reasoning: {action_plan.get('reasoning', 'N/A')}")
+
+        return action_plan
+
+    except Exception as e:
+        print(f"⚠️  Claude API error: {e}")
+        # Fallback to simple intent parsing
+        return parse_intent(message)
 
 
 async def handle_calendar_intent(message: str):
@@ -436,32 +540,101 @@ async def handle_context_intent(message: str):
         }
 
 
+async def handle_deployment_intent(message: str, action_plan: dict = None):
+    """
+    Handle code deployment requests via Gemini agent
+
+    This enables autonomous deployment from voice commands!
+    """
+    try:
+        if not gemini_agent:
+            return {
+                "reply_text": "Deployment agent not available. Check GOOGLE_API_KEY.",
+                "action": "deployment_unavailable"
+            }
+
+        print(f"🚀 Deployment intent: {message}")
+
+        # Update watch status
+        coordinator.context_store.set("watch.config.status", "🚀 Planning deployment...")
+
+        # Create deployment task
+        task = Task(
+            task_id=f"deploy_{datetime.now().timestamp()}",
+            workflow="deployment/autonomous_deploy.md",
+            description=action_plan.get('task_description', message) if action_plan else message,
+            priority="high",
+            assigned_at=datetime.now().isoformat()
+        )
+
+        # Execute via Gemini agent (async)
+        gemini_agent.execute_task(task)
+
+        # Update watch status
+        coordinator.context_store.set("watch.config.status", "⚙️ Deploying...")
+
+        print(f"✅ Deployment task submitted to Gemini agent")
+
+        return {
+            "reply_text": "Deployment started! Gemini agent is analyzing and deploying.",
+            "action": "deployment_started",
+            "task_id": task.task_id
+        }
+
+    except Exception as e:
+        print(f"❌ Deployment error: {e}")
+        coordinator.context_store.set("watch.config.status", "✗ Deployment error")
+        return {
+            "reply_text": f"Deployment failed: {str(e)}",
+            "action": "deployment_error"
+        }
+
+
 @app.post("/functions/v1/chat", response_model=ChatResponse)
 async def receive_chat(request: ChatRequest):
     """
     Receives voice messages from watch app
-    Routes to demo feature handlers based on intent
+    Routes to appropriate handlers via Claude API (if available) or keyword matching
+
+    This is the DECENTRALIZED AUTONOMOUS SYSTEM in action:
+    Watch → WiFi → This endpoint → Claude API (reasoning) → Gemini Agent (deployment)
     """
     if not coordinator:
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
     print(f"⌚ Watch message: {request.message}")
 
-    # Parse intent
-    intent_data = parse_intent(request.message)
-    intent = intent_data["intent"]
+    # Get system context for Claude API
+    context = {
+        "deployments": coordinator.context_store.get("deployments", []),
+        "saved_contexts": coordinator.context_store.get("saved_contexts", {}),
+        "active_agents": [a for a in agents.keys()]
+    }
 
-    print(f"🎯 Detected intent: {intent}")
+    # Use Claude API for enhanced reasoning (if available)
+    if claude_client:
+        print("🤖 Using Claude API for intent analysis...")
+        intent_data = await process_with_claude_api(request.message, context)
+    else:
+        # Fallback to simple keyword matching
+        print("🔍 Using keyword-based intent parsing...")
+        intent_data = parse_intent(request.message)
+
+    intent = intent_data["intent"]
+    print(f"🎯 Detected intent: {intent} (confidence: {intent_data.get('confidence', 'N/A')})")
 
     # Route to appropriate handler
-    if intent == "calendar":
+    if intent == "deploy_code":
+        # Autonomous deployment via Gemini agent!
+        response = await handle_deployment_intent(request.message, intent_data)
+    elif intent == "calendar":
         response = await handle_calendar_intent(request.message)
     elif intent == "slack":
         response = await handle_slack_intent(request.message)
     elif intent == "save_context":
         response = await handle_context_intent(request.message)
     else:
-        # Unknown intent - fallback to old coordinator routing
+        # Unknown intent - fallback to coordinator routing
         coordinator.context_store.update("watch.config.status", "Processing message...")
         success = coordinator.route_incoming_task(
             task_description=f"Process watch message: {request.message}",
@@ -475,7 +648,7 @@ async def receive_chat(request: ChatRequest):
         else:
             coordinator.context_store.update("watch.config.status", "Agent Swarm Idle")
             response = {
-                "reply_text": "I didn't understand that command.",
+                "reply_text": "I didn't understand that command. Try: 'schedule meeting', 'send slack brief', 'deploy feature', or 'save context'",
                 "action": "unknown"
             }
 
@@ -519,6 +692,94 @@ async def update_watch_config(config: WatchConfig):
     return {
         "status": "updated",
         "config": config,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.get("/api/deployments")
+async def get_deployments():
+    """
+    Get deployment history for dashboard monitoring
+
+    Shows all autonomous deployments executed by Gemini agent
+    """
+    if not coordinator:
+        raise HTTPException(status_code=503, detail="Coordinator not initialized")
+
+    deployments = coordinator.context_store.get("deployments", [])
+
+    # Sort by timestamp (newest first)
+    deployments.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+
+    return {
+        "deployments": deployments,
+        "total": len(deployments),
+        "agent_status": "online" if gemini_agent else "offline"
+    }
+
+
+@app.get("/api/deployments/{task_id}")
+async def get_deployment_details(task_id: str):
+    """Get specific deployment details"""
+    if not coordinator:
+        raise HTTPException(status_code=503, detail="Coordinator not initialized")
+
+    # Check in tasks first
+    task_result = coordinator.context_store.get(f"tasks.{task_id}.result")
+    if task_result:
+        return {
+            "task_id": task_id,
+            "result": task_result,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    # Check in deployments
+    deployments = coordinator.context_store.get("deployments", [])
+    for deployment in deployments:
+        if deployment.get("task_id") == task_id:
+            return deployment
+
+    raise HTTPException(status_code=404, detail=f"Deployment {task_id} not found")
+
+
+@app.get("/api/codebase/context")
+async def get_codebase_context():
+    """
+    Get current codebase context for dashboard display
+
+    Shows project structure, recent changes, deployment targets
+    """
+    if not gemini_agent:
+        return {
+            "error": "Gemini agent not initialized",
+            "message": "Set GOOGLE_API_KEY to enable codebase analysis"
+        }
+
+    context = gemini_agent._get_codebase_context()
+
+    return {
+        "codebase": context,
+        "cache_age_seconds": (datetime.now() - gemini_agent.codebase_cache_time).total_seconds() if gemini_agent.codebase_cache_time else 0,
+        "last_updated": gemini_agent.codebase_cache_time.isoformat() if gemini_agent.codebase_cache_time else None
+    }
+
+
+@app.post("/api/codebase/refresh")
+async def refresh_codebase_context():
+    """Force refresh of codebase context cache"""
+    if not gemini_agent:
+        raise HTTPException(status_code=503, detail="Gemini agent not initialized")
+
+    # Clear cache to force rebuild
+    gemini_agent.codebase_context = None
+    gemini_agent.codebase_cache_time = None
+
+    # Get fresh context
+    context = gemini_agent._get_codebase_context()
+
+    return {
+        "status": "refreshed",
+        "codebase": context,
         "timestamp": datetime.now().isoformat()
     }
 

@@ -5,6 +5,7 @@ pydantic==2.5.3
 
 # AI & Anthropic
 anthropic==0.18.1
+google-generativeai==0.3.2  # Gemini API for deployment agent
 
 # Database & Storage
 supabase==2.3.0
