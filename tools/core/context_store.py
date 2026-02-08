@@ -92,7 +92,9 @@ class JSONFileContextStore(ContextStoreInterface):
             auto_save: Automatically save after each modification
         """
         if file_path is None:
-            file_path = "/Users/vik043/Desktop/Agentic Workflow/.tmp/context_store.json"
+            # Use relative path that works in both local and Railway environments
+            # Create .tmp directory in current working directory
+            file_path = os.path.join(os.getcwd(), ".tmp", "context_store.json")
 
         self.file_path = Path(file_path)
         self.auto_save = auto_save

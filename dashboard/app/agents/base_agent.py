@@ -46,7 +46,14 @@ class BaseAgent(ABC):
         self.role = role
         self.status = AgentStatus.STARTING
         self.running = False
-        self.config_path = config_path or "/Users/vik043/Desktop/Agentic Workflow/config/agent_roles.yaml"
+
+        # Use relative path that works in both local and Railway environments
+        if config_path is None:
+            # Try to find config relative to this file
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+            config_path = os.path.join(base_dir, "config", "agent_roles.yaml")
+
+        self.config_path = config_path
 
         # Core systems (initialized in startup)
         self.context_store: Optional[ContextStore] = None
@@ -130,16 +137,30 @@ class BaseAgent(ABC):
         """Load agent capabilities and workflows from config"""
         import yaml
 
-        with open(self.config_path, 'r') as f:
-            config = yaml.safe_load(f)
+        try:
+            if not os.path.exists(self.config_path):
+                print(f"[{self.agent_id}] ⚠️  Config file not found at {self.config_path}, using defaults")
+                # Use default configuration
+                self.capabilities = []
+                self.workflows = []
+                self.max_concurrent_tasks = 3
+                return
 
-        if self.role in config.get('agents', {}):
-            role_config = config['agents'][self.role]
-            self.capabilities = role_config.get('capabilities', [])
-            self.workflows = role_config.get('workflows', [])
-            self.max_concurrent_tasks = role_config.get('max_concurrent_tasks', 3)
+            with open(self.config_path, 'r') as f:
+                config = yaml.safe_load(f)
 
-        print(f"[{self.agent_id}] Configuration loaded: {len(self.capabilities)} capabilities, {len(self.workflows)} workflows")
+            if self.role in config.get('agents', {}):
+                role_config = config['agents'][self.role]
+                self.capabilities = role_config.get('capabilities', [])
+                self.workflows = role_config.get('workflows', [])
+                self.max_concurrent_tasks = role_config.get('max_concurrent_tasks', 3)
+
+            print(f"[{self.agent_id}] Configuration loaded: {len(self.capabilities)} capabilities, {len(self.workflows)} workflows")
+        except Exception as e:
+            print(f"[{self.agent_id}] ⚠️  Config loading failed: {e}, using defaults")
+            self.capabilities = []
+            self.workflows = []
+            self.max_concurrent_tasks = 3
 
     def _register_with_system(self):
         """Register agent with the agent registry"""

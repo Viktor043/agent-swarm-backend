@@ -138,7 +138,7 @@ async def startup_event():
         print(f"⚠️  Gemini agent initialization failed: {e}")
 
     # Initialize default watch config
-    coordinator.context_store.set("watch.config", {
+    coordinator.context_store.set_context("watch.config", {
         "status": "Agent Swarm Online",
         "animation_url": "https://lottie.host/4e6fbdae-9e0c-4b6f-915d-d3e9b8b8c8a8/TbWqGjFQCE.json",  # Default Lottie animation
         "primary_color": "#9333EA"  # Purple
@@ -333,7 +333,7 @@ async def get_watch_config():
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
     # Get current config from context store
-    config = coordinator.context_store.get("watch.config", {
+    config = coordinator.context_store.get_context("watch.config", {
         "status": "Connecting...",
         "animation_url": "",
         "primary_color": "#FFFFFF"
@@ -465,7 +465,7 @@ async def handle_calendar_intent(message: str):
         )
 
         # Update watch status
-        coordinator.context_store.set("watch.config.status", f"✓ Event created: {event_details['title']}")
+        coordinator.context_store.set_context("watch.config.status", f"✓ Event created: {event_details['title']}")
 
         print(f"✅ Calendar event created: {event_details['title']} at {event_details['start_time']}")
 
@@ -475,7 +475,7 @@ async def handle_calendar_intent(message: str):
         }
     except Exception as e:
         print(f"❌ Calendar error: {e}")
-        coordinator.context_store.set("watch.config.status", "✗ Calendar error")
+        coordinator.context_store.set_context("watch.config.status", "✗ Calendar error")
         return {
             "reply_text": "Failed to create calendar event. Check Google Calendar setup.",
             "action": "calendar_error"
@@ -492,7 +492,7 @@ async def handle_slack_intent(message: str):
         slack_client.send_daily_brief()
 
         # Update watch status
-        coordinator.context_store.set("watch.config.status", "✓ Slack brief sent")
+        coordinator.context_store.set_context("watch.config.status", "✓ Slack brief sent")
 
         print(f"✅ Slack brief sent successfully")
 
@@ -502,7 +502,7 @@ async def handle_slack_intent(message: str):
         }
     except Exception as e:
         print(f"❌ Slack error: {e}")
-        coordinator.context_store.set("watch.config.status", "✗ Slack error")
+        coordinator.context_store.set_context("watch.config.status", "✗ Slack error")
         return {
             "reply_text": "Failed to send Slack message. Check SLACK_BOT_TOKEN.",
             "action": "slack_error"
@@ -517,14 +517,14 @@ async def handle_context_intent(message: str):
 
         # Store in context store with timestamp
         context_id = f"context_{datetime.now().timestamp()}"
-        coordinator.context_store.set(f"saved_contexts.{context_id}", {
+        coordinator.context_store.set_context(f"saved_contexts.{context_id}", {
             "text": context_text,
             "timestamp": datetime.now().isoformat(),
             "source": "watch_voice_command"
         })
 
         # Update watch status
-        coordinator.context_store.set("watch.config.status", "✓ Context saved")
+        coordinator.context_store.set_context("watch.config.status", "✓ Context saved")
 
         print(f"💾 Context saved: {context_text[:50]}...")
 
@@ -556,7 +556,7 @@ async def handle_deployment_intent(message: str, action_plan: dict = None):
         print(f"🚀 Deployment intent: {message}")
 
         # Update watch status
-        coordinator.context_store.set("watch.config.status", "🚀 Planning deployment...")
+        coordinator.context_store.set_context("watch.config.status", "🚀 Planning deployment...")
 
         # Create deployment task
         task = Task(
@@ -571,7 +571,7 @@ async def handle_deployment_intent(message: str, action_plan: dict = None):
         gemini_agent.execute_task(task)
 
         # Update watch status
-        coordinator.context_store.set("watch.config.status", "⚙️ Deploying...")
+        coordinator.context_store.set_context("watch.config.status", "⚙️ Deploying...")
 
         print(f"✅ Deployment task submitted to Gemini agent")
 
@@ -583,7 +583,7 @@ async def handle_deployment_intent(message: str, action_plan: dict = None):
 
     except Exception as e:
         print(f"❌ Deployment error: {e}")
-        coordinator.context_store.set("watch.config.status", "✗ Deployment error")
+        coordinator.context_store.set_context("watch.config.status", "✗ Deployment error")
         return {
             "reply_text": f"Deployment failed: {str(e)}",
             "action": "deployment_error"
@@ -606,8 +606,8 @@ async def receive_chat(request: ChatRequest):
 
     # Get system context for Claude API
     context = {
-        "deployments": coordinator.context_store.get("deployments", []),
-        "saved_contexts": coordinator.context_store.get("saved_contexts", {}),
+        "deployments": coordinator.context_store.get_context("deployments", []),
+        "saved_contexts": coordinator.context_store.get_context("saved_contexts", {}),
         "active_agents": [a for a in agents.keys()]
     }
 
@@ -635,7 +635,7 @@ async def receive_chat(request: ChatRequest):
         response = await handle_context_intent(request.message)
     else:
         # Unknown intent - fallback to coordinator routing
-        coordinator.context_store.update("watch.config.status", "Processing message...")
+        coordinator.context_store.update_context("watch.config.status", "Processing message...")
         success = coordinator.route_incoming_task(
             task_description=f"Process watch message: {request.message}",
             priority="high"
@@ -646,7 +646,7 @@ async def receive_chat(request: ChatRequest):
                 "action": "task_queued"
             }
         else:
-            coordinator.context_store.update("watch.config.status", "Agent Swarm Idle")
+            coordinator.context_store.update_context("watch.config.status", "Agent Swarm Idle")
             response = {
                 "reply_text": "I didn't understand that command. Try: 'schedule meeting', 'send slack brief', 'deploy feature', or 'save context'",
                 "action": "unknown"
@@ -661,7 +661,7 @@ async def get_saved_contexts():
     if not coordinator:
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
-    contexts_data = coordinator.context_store.get("saved_contexts", {})
+    contexts_data = coordinator.context_store.get_context("saved_contexts", {})
 
     # Convert to list format
     contexts = [
@@ -687,7 +687,7 @@ async def update_watch_config(config: WatchConfig):
     if not coordinator:
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
-    coordinator.context_store.set("watch.config", config.dict())
+    coordinator.context_store.set_context("watch.config", config.dict())
 
     return {
         "status": "updated",
@@ -706,7 +706,7 @@ async def get_deployments():
     if not coordinator:
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
-    deployments = coordinator.context_store.get("deployments", [])
+    deployments = coordinator.context_store.get_context("deployments", [])
 
     # Sort by timestamp (newest first)
     deployments.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
@@ -725,7 +725,7 @@ async def get_deployment_details(task_id: str):
         raise HTTPException(status_code=503, detail="Coordinator not initialized")
 
     # Check in tasks first
-    task_result = coordinator.context_store.get(f"tasks.{task_id}.result")
+    task_result = coordinator.context_store.get_context(f"tasks.{task_id}.result")
     if task_result:
         return {
             "task_id": task_id,
@@ -734,7 +734,7 @@ async def get_deployment_details(task_id: str):
         }
 
     # Check in deployments
-    deployments = coordinator.context_store.get("deployments", [])
+    deployments = coordinator.context_store.get_context("deployments", [])
     for deployment in deployments:
         if deployment.get("task_id") == task_id:
             return deployment
