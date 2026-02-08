@@ -174,9 +174,11 @@ async def send_watch_message(request: WatchMessageRequest):
 
     print(f"📱 Lovable message: {request.message}")
 
-    try:
-        # Process message with Claude API if available
-        if claude_client:
+    reply_text = None
+
+    # Try Claude API first
+    if claude_client:
+        try:
             response = claude_client.messages.create(
                 model="claude-sonnet-4-5-20250929",
                 max_tokens=256,
@@ -186,26 +188,25 @@ async def send_watch_message(request: WatchMessageRequest):
                 }]
             )
             reply_text = response.content[0].text
-        else:
-            # Fallback response without Claude
-            reply_text = f"Received: {request.message}"
+            print(f"🤖 Claude reply: {reply_text}")
+        except Exception as claude_error:
+            print(f"⚠️  Claude API error: {claude_error}")
+            reply_text = None
 
-        # Update watch config with the response
-        watch_config["status"] = reply_text[:100]  # Limit to 100 chars for watch display
-        watch_config["primary_color"] = "#00FF00"  # Green to indicate new message
+    # Fallback if Claude failed or not available
+    if not reply_text:
+        reply_text = f"Echo: {request.message} (Claude API unavailable - check ANTHROPIC_API_KEY)"
 
-        print(f"🤖 Claude reply: {reply_text}")
+    # Update watch config with the response
+    watch_config["status"] = reply_text[:100]  # Limit to 100 chars for watch display
+    watch_config["primary_color"] = "#00FF00"  # Green to indicate new message
 
-        return {
-            "status": "success",
-            "reply": reply_text,
-            "timestamp": datetime.now().isoformat(),
-            "message": "Response sent to watch via config update"
-        }
-
-    except Exception as e:
-        print(f"❌ Error processing message: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "status": "success",
+        "reply": reply_text,
+        "timestamp": datetime.now().isoformat(),
+        "message": "Response sent to watch via config update"
+    }
 
 def parse_intent(message: str) -> dict:
     """Simple keyword-based intent parser"""
